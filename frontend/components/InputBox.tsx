@@ -2,20 +2,36 @@
 
 import { useState } from "react";
 
-export default function InputBox() {
+interface InputBoxProps {
+  onSend: (message: string) => void;
+}
+
+export default function InputBox({ onSend }: InputBoxProps) {
   const [message, setMessage] = useState("");
 
+  const handleSend = () => {
+    if (!message.trim()) return;
+
+    onSend(message);
+    setMessage("");
+  };
+
   return (
-    <div className="border-t p-4">
+    <div className="border-t p-4 flex gap-2">
       <input
         type="text"
-        placeholder="Ask AI Engineer..."
         value={message}
+        placeholder="Ask AI Engineer..."
         onChange={(e) => setMessage(e.target.value)}
-        className="w-full border rounded-lg px-4 py-2"
+        className="flex-1 border rounded-lg px-4 py-2"
       />
 
-      <p className="mt-2">You typed: {message}</p>
+      <button
+        onClick={handleSend}
+        className="bg-blue-500 text-white px-4 py-2 rounded-lg"
+      >
+        Send
+      </button>
     </div>
   );
 }

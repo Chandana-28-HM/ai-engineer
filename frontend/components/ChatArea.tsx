@@ -1,15 +1,20 @@
-import InputBox from "@/components/InputBox";
+import { Message } from "@/types/message";
+import MessageBubble from "./MessageBubble";
 
-export default function ChatArea() {
+interface ChatAreaProps {
+  messages: Message[];
+}
+
+export default function ChatArea({ messages }: ChatAreaProps) {
   return (
-    <div className="flex flex-col flex-1">
-      <div className="flex-1 p-4">
-        <h2 className="text-xl font-semibold">
-          Welcome to AI Engineer
-        </h2>
-      </div>
-
-      <InputBox />
+    <div className="flex-1 overflow-y-auto p-4">
+      {messages.map((message) => (
+        <MessageBubble
+          key={message.id}
+          role={message.role}
+          content={message.content}
+        />
+      ))}
     </div>
   );
 }

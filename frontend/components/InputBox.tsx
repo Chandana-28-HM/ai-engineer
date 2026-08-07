@@ -6,7 +6,9 @@ interface InputBoxProps {
   onSend: (message: string) => void;
 }
 
-export default function InputBox({ onSend }: InputBoxProps) {
+export default function InputBox({
+  onSend,
+}: InputBoxProps) {
   const [message, setMessage] = useState("");
 
   const handleSend = () => {
@@ -23,6 +25,11 @@ export default function InputBox({ onSend }: InputBoxProps) {
         value={message}
         placeholder="Ask AI Engineer..."
         onChange={(e) => setMessage(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") {
+            handleSend();
+          }
+        }}
         className="flex-1 border rounded-lg px-4 py-2"
       />
 

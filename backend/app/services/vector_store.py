@@ -13,8 +13,8 @@ COLLECTION = "code_chunks"
 class VectorStore:
     """Qdrant-backed vector store (local disk mode when no server is configured)."""
 
-    def __init__(self) -> None:
-        self.client = QdrantClient(path=str(settings.qdrant_path))
+    def __init__(self, client: QdrantClient | None = None) -> None:
+        self.client = client or QdrantClient(path=str(settings.qdrant_path))
         self._ensure_collection(settings.embedding_dim)
 
     def _ensure_collection(self, dim: int) -> None:
@@ -42,10 +42,10 @@ class VectorStore:
         return len(points)
 
     async def search(self, repo_id: int, vector: list[float], limit: int = 5) -> list[dict]:
-        hits = await asyncio.to_thread(
-            self.client.search,
+        response = await asyncio.to_thread(
+            self.client.query_points,
             collection_name=COLLECTION,
-            query_vector=vector,
+            query=vector,
             query_filter=models.Filter(
                 must=[models.FieldCondition(key="repo_id", match=models.MatchValue(value=repo_id))]
             ),
@@ -53,7 +53,7 @@ class VectorStore:
             with_payload=True,
         )
         results: list[dict] = []
-        for hit in hits:
+        for hit in response.points:
             results.append(
                 {
                     "file_path": hit.payload.get("file_path", ""),
@@ -87,4 +87,26 @@ class VectorStore:
         return result.count
 
 
-vector_store = VectorStore()
+class LazyVectorStore:
+    """Opens the Qdrant store on first use so imports never touch the storage lock."""
+
+    _store: VectorStore | None = None
+
+    def _ensure(self) -> VectorStore:
+        if self._store is None:
+            self._store = VectorStore()
+        return self._store
+
+    def __getattr__(self, name: str):
+        return getattr(self._ensure(), name)
+
+    def close(self) -> None:
+        if self._store is not None:
+            try:
+                self._store.client.close()
+            except Exception:  # noqa: BLE001
+                pass
+            self._store = None
+
+
+vector_store = LazyVectorStore()

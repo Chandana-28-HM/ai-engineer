@@ -5,8 +5,12 @@ from typing import Any, Callable, Optional, TypedDict
 
 from langchain_core.messages import HumanMessage, SystemMessage
 from langgraph.graph import END, START, StateGraph
-from langgraph.prebuilt import create_react_agent
 from pydantic import BaseModel
+
+try:
+    from langchain.agents import create_agent
+except ImportError:  # pragma: no cover
+    from langgraph.prebuilt import create_react_agent as create_agent
 
 from app.config import settings
 from app.services.agent.tools import PublishFn, make_tools
@@ -36,7 +40,7 @@ def make_single_agent(workspace: Path, publish: Optional[PublishFn] = None, chan
     tools = make_tools(workspace, publish=publish, changes=changes)
     model = get_chat_model()
     system = f"{prompts.CODER}\n\nWorkspace: {workspace.resolve()}\nAll file operations must stay inside this workspace."
-    return create_react_agent(model, tools, prompt=system)
+    return create_agent(model, tools, system_prompt=system)
 
 
 async def _stream_agent(agent: Any, instruction: str, publish: Optional[PublishFn]) -> str:

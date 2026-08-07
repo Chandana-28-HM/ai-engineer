@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-import math
 import re
+import zlib
 from abc import ABC, abstractmethod
 
 from langchain_google_genai import GoogleGenerativeAIEmbeddings
@@ -9,7 +9,7 @@ from langchain_google_genai import GoogleGenerativeAIEmbeddings
 from app.config import settings
 
 _WORD_RE = re.compile(r"[A-Za-z0-9_]+")
-_NGRAM_SIZES = (2, 3)
+_NGRAM_SIZES = (1, 2, 3)
 
 
 class Embedder(ABC):
@@ -49,63 +49,43 @@ class GeminiEmbedder(Embedder):
 
 
 class LocalEmbedder(Embedder):
-    """Zero-dependency hashed n-gram TF-IDF embedder.
+    """Zero-dependency hashed word/ngram embeddings (stateless, deterministic).
 
-    Used as a fallback when no embedding API key is configured so the
-    repository search still works locally. Deterministic and fast.
+    Used as a fallback when no embedding API key is configured so repository
+    search still works locally. Vectors are consistent across processes, so
+    indexed data remains searchable after a server restart.
     """
 
-    def __init__(self, dim: int = 4096) -> None:
-        self._dim = dim
-        self._df: dict[tuple[int, int], int] = {}
-        self._n_docs = 0
-        self._fitted = False
+    def __init__(self, dim: int | None = None) -> None:
+        self._dim = dim or settings.embedding_dim
 
-    def _tokens(self, text: str) -> list[tuple[int, int]]:
+    def _tokens(self, text: str) -> list[tuple[int, float]]:
         lower = text.lower()
         words = _WORD_RE.findall(lower)
-        tokens: list[tuple[int, int]] = []
+        tokens: list[tuple[int, float]] = []
         for n in _NGRAM_SIZES:
             for i in range(max(0, len(words) - n + 1)):
                 gram = " ".join(words[i : i + n])
-                tokens.append((n, hash(gram) % self._dim))
+                h = zlib.crc32(gram.encode("utf-8"))
+                idx = h % self._dim
+                sign = 1.0 if (h >> 31) & 1 else -1.0
+                tokens.append((idx, sign))
         return tokens
 
-    def _fit(self, texts: list[str]) -> None:
-        if self._fitted:
-            return
-        for text in texts:
-            seen: set[tuple[int, int]] = set()
-            for tok in self._tokens(text):
-                if tok not in seen:
-                    seen.add(tok)
-                    self._df[tok] = self._df.get(tok, 0) + 1
-            self._n_docs += 1
-        self._fitted = True
+    async def embed_texts(self, texts: list[str]) -> list[list[float]]:
+        return [self._vector(t) for t in texts]
+
+    async def embed_query(self, text: str) -> list[float]:
+        return self._vector(text)
 
     def _vector(self, text: str) -> list[float]:
         import numpy as np
 
         vec = np.zeros(self._dim, dtype=np.float32)
-        tokens = self._tokens(text)
-        if not tokens:
-            return vec.tolist()
-        n = len(tokens)
-        for tok in tokens:
-            tf = 1.0 + math.log(n)
-            idf = math.log((self._n_docs + 1) / (self._df.get(tok, 0) + 1)) + 1
-            vec[tok[1]] += tf * idf
+        for idx, sign in self._tokens(text):
+            vec[idx] += sign
         norm = float(np.linalg.norm(vec)) or 1.0
         return (vec / norm).tolist()
-
-    async def embed_texts(self, texts: list[str]) -> list[list[float]]:
-        self._fit(texts)
-        return [self._vector(t) for t in texts]
-
-    async def embed_query(self, text: str) -> list[float]:
-        if not self._fitted:
-            return self._vector(text)
-        return self._vector(text)
 
     @property
     def dim(self) -> int:

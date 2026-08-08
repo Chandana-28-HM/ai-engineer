@@ -10,15 +10,15 @@ import {
   ListOrdered,
   FileCheck,
 } from "lucide-react";
-import { streamSSE } from "@/lib/api";
-import type { AgentStepEvent } from "@/lib/types";
+import type { AgentRun, StepView } from "@/hooks/useAgentRun";
+import { AGENT_STAGES } from "@/hooks/useAgentRun";
 
 interface AgentPanelProps {
   projectId: number | null;
   repoId: number | null;
+  run: AgentRun;
 }
 
-const STAGES = ["planner", "coder", "reviewer", "debugger", "documenter"];
 const STAGE_LABEL: Record<string, string> = {
   planner: "Planner",
   coder: "Coder",
@@ -27,99 +27,19 @@ const STAGE_LABEL: Record<string, string> = {
   documenter: "Documenter",
 };
 
-interface StepView {
-  agent: string;
-  title: string;
-  status: "running" | "done" | "failed";
-  output?: string;
-  files?: string[];
-  approved?: boolean;
-  comments?: string[];
-}
-
-export default function AgentPanel({ projectId, repoId }: AgentPanelProps) {
+export default function AgentPanel({ projectId, repoId, run }: AgentPanelProps) {
   const [goal, setGoal] = useState("");
   const [kind, setKind] = useState<"multi" | "single">("multi");
-  const [running, setRunning] = useState(false);
-  const [steps, setSteps] = useState<StepView[]>([]);
-  const [toolLogs, setToolLogs] = useState<string[]>([]);
-  const [summary, setSummary] = useState("");
-  const [error, setError] = useState("");
   const logsRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     logsRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [toolLogs, steps]);
+  }, [run.toolLogs, run.steps]);
 
-  const run = () => {
-    if (!goal.trim() || !projectId || running) return;
-    setRunning(true);
-    setSteps([]);
-    setToolLogs([]);
-    setSummary("");
-    setError("");
-
-    streamSSE(
-      "/api/agent/run",
-      { project_id: projectId, repo_id: repoId, goal: goal.trim(), kind },
-      {
-        onEvent: (event, data) => {
-          const d = data as Record<string, unknown>;
-          if (event === "run_start") {
-            setSteps([]);
-          } else if (event === "step") {
-            const s = d as unknown as AgentStepEvent;
-            const view: StepView = {
-              agent: s.agent,
-              title: s.title,
-              status: s.status === "done" ? "done" : s.status === "failed" ? "failed" : "running",
-              output: s.output,
-              files: s.files,
-              approved: s.approved,
-              comments: s.comments,
-            };
-            setSteps((prev) => {
-              const idx = prev.findIndex((p) => p.title === view.title);
-              if (idx === -1) return [...prev, view];
-              const next = [...prev];
-              next[idx] = view;
-              return next;
-            });
-            if (s.plan) setSteps((prev) => {
-              const plan = s.plan!.map((p) => ({
-                agent: "coder",
-                title: `Plan · ${p.title}`,
-                status: "running" as const,
-                output: p.description,
-              }));
-              return plan;
-            });
-          } else if (event === "agent_tool") {
-            const td = d as { kind?: string; command?: string; path?: string };
-            setToolLogs((prev) => [...prev, `▸ ${td.kind ?? "tool"} ${td.command ?? td.path ?? ""}`]);
-          } else if (event === "agent_token") {
-            const td = d as { text?: string };
-            if (td.text) setToolLogs((prev) => [...prev, td.text!]);
-          } else if (event === "run_done") {
-            setSummary((d.summary as string) || "Agent run completed.");
-            setRunning(false);
-          } else if (event === "run_error" || event === "error") {
-            setError((d.message as string) || "Agent run failed.");
-            setRunning(false);
-          }
-        },
-        onDone: () => setRunning(false),
-        onError: (message) => {
-          setError(message);
-          setRunning(false);
-        },
-      },
-    );
+  const launch = () => {
+    run.start(projectId, repoId, goal, kind);
+    setGoal("");
   };
-
-  const activeStage =
-    steps.filter((s) => s.status === "running").map((s) => s.agent)[0] ??
-    steps.filter((s) => s.status === "done").map((s) => s.agent).at(-1);
 
   return (
     <div className="flex h-full w-96 shrink-0 flex-col overflow-y-auto border-l border-zinc-800 bg-zinc-950/80">
@@ -145,7 +65,7 @@ export default function AgentPanel({ projectId, repoId }: AgentPanelProps) {
             <textarea
               value={goal}
               onChange={(e) => setGoal(e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && !e.shiftKey && run()}
+              onKeyDown={(e) => e.key === "Enter" && !e.shiftKey && launch()}
               rows={3}
               placeholder="e.g. Add a REST API endpoint with tests"
               className="w-full resize-none rounded-xl border border-zinc-700 bg-zinc-900 px-3 py-2 text-xs text-zinc-100 outline-none focus:border-cyan-500"
@@ -170,36 +90,35 @@ export default function AgentPanel({ projectId, repoId }: AgentPanelProps) {
                 {repoId ? "edits attached repo" : "scratch workspace"}
               </span>
               <button
-                onClick={run}
-                disabled={running || !goal.trim()}
+                onClick={launch}
+                disabled={run.running || !goal.trim()}
                 className="ml-auto flex items-center gap-1.5 rounded-xl bg-gradient-to-r from-cyan-600 to-violet-600 px-4 py-2 text-xs font-bold text-white disabled:opacity-40"
               >
-                {running ? <Loader2 size={13} className="animate-spin" /> : <Play size={13} />}
-                {running ? "Running…" : "Run agent"}
+                {run.running ? <Loader2 size={13} className="animate-spin" /> : <Play size={13} />}
+                {run.running ? "Running…" : "Run agent"}
               </button>
             </div>
 
-            {error && (
+            {run.error && (
               <div className="rounded-lg border border-red-800 bg-red-950/50 px-3 py-2 text-xs text-red-300">
-                {error}
+                {run.error}
               </div>
             )}
 
-            {/* Stage timeline */}
             <div className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-3">
               <div className="mb-2 flex items-center gap-1.5 text-[11px] font-semibold text-zinc-300">
                 <ListOrdered size={12} /> Pipeline
               </div>
               <div className="space-y-1">
-                {STAGES.map((stage) => {
-                  const step = steps.filter((s) => s.agent === stage).at(-1);
-                  const state = running && (activeStage === stage || (step && step.status === "running"))
+                {AGENT_STAGES.map((stage) => {
+                  const step = run.steps.filter((s) => s.agent === stage).at(-1);
+                  const state = run.running && (run.activeStage === stage || (step && step.status === "running"))
                     ? "active"
                     : step?.status === "done"
                       ? "done"
                       : step?.status === "failed"
                         ? "failed"
-                        : running
+                        : run.running
                           ? "waiting"
                           : "idle";
                   return (
@@ -225,17 +144,15 @@ export default function AgentPanel({ projectId, repoId }: AgentPanelProps) {
                         <span className="h-3 w-3 rounded-full border border-zinc-700" />
                       )}
                       <span className="font-medium">{STAGE_LABEL[stage]}</span>
-                      {step?.title && (
-                        <span className="truncate opacity-70">· {step.title}</span>
-                      )}
+                      {step?.title && <span className="truncate opacity-70">· {step.title}</span>}
                     </div>
                   );
                 })}
               </div>
 
-              {steps.length > 0 && (
+              {run.steps.length > 0 && (
                 <div className="mt-2 space-y-1 border-t border-zinc-800 pt-2">
-                  {steps.map((s, i) => (
+                  {run.steps.map((s: StepView, i) => (
                     <div key={i} className="rounded-lg bg-black/25 p-2 text-[10px] text-zinc-400">
                       <div className="flex items-center justify-between">
                         <span className="font-semibold text-zinc-300">{s.title}</span>
@@ -269,13 +186,13 @@ export default function AgentPanel({ projectId, repoId }: AgentPanelProps) {
               )}
             </div>
 
-            {summary && (
+            {run.summary && (
               <div className="rounded-xl border border-emerald-800/60 bg-emerald-950/30 p-3">
                 <div className="mb-1 flex items-center gap-1.5 text-[11px] font-semibold text-emerald-300">
                   <FileCheck size={12} /> Final report
                 </div>
                 <p className="whitespace-pre-wrap text-[11px] leading-relaxed text-zinc-300">
-                  {summary}
+                  {run.summary}
                 </p>
                 {repoId && (
                   <p className="mt-2 text-[10px] text-zinc-500">
@@ -285,9 +202,9 @@ export default function AgentPanel({ projectId, repoId }: AgentPanelProps) {
               </div>
             )}
 
-            {toolLogs.length > 0 && (
+            {run.toolLogs.length > 0 && (
               <div ref={logsRef} className="max-h-48 overflow-y-auto rounded-xl border border-zinc-800 bg-black/40 p-2 font-mono text-[10px] text-zinc-500">
-                {toolLogs.map((line, i) => (
+                {run.toolLogs.map((line, i) => (
                   <div key={i} className="whitespace-pre-wrap leading-relaxed">
                     {line}
                   </div>

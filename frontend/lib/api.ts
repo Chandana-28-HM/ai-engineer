@@ -15,7 +15,7 @@ async function parseError(res: Response): Promise<string> {
     if (body?.detail) {
       if (typeof body.detail === "string") return body.detail;
       if (Array.isArray(body.detail)) {
-        return body.detail.map((d) => d.msg).join("; ");
+        return (body.detail as { msg: string }[]).map((d) => d.msg).join("; ");
       }
       return JSON.stringify(body.detail);
     }
